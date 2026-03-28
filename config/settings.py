@@ -10,14 +10,23 @@ from pathlib import Path
 
 # 默认配置
 DEFAULT_CONFIG = {
-    "playlist_url": "",            # 歌单链接
-    "download_dir": "./downloads",  # 下载目录
-    "default_quality": "hires",     # 默认音质: hires/lossless/exhigh/higher/standard
+    "playlists": [                 # 歌单列表（支持多歌单-多目录映射）
+        {
+            "name": "默认歌单",    # 歌单名称（用于显示）
+            "url": "",             # 歌单链接
+            "download_dir": "./downloads",  # 该歌单的下载目录
+            "quality": "hires"     # 该歌单的音质（可选，默认使用 default_quality）
+        }
+    ],
+    "default_quality": "hires",    # 默认音质: hires/lossless/exhigh/higher/standard
     "login": {
         "phone": "",     # 手机号（与 email 二选一）
         "email": "",     # 邮箱（与 phone 二选一）
         "password": ""   # 密码（明文）
-    }
+    },
+    # 兼容旧配置（已弃用，但保留读取支持）
+    "playlist_url": "",
+    "download_dir": "./downloads"
 }
 
 # 音质优先级（从高到低）
@@ -123,21 +132,34 @@ class Settings:
             default.update(user)
         return default
 
-    def get_api_url(self, endpoint=''):
+    def get_playlists(self) -> list:
         """
-        获取完整API地址
-        
-        Args:
-            endpoint: API端点路径
+        获取歌单列表，兼容新旧配置格式
         
         Returns:
-            完整API URL
+            歌单配置列表
         """
-        base_url = self.get('api_server_url', 'http://localhost:3000').rstrip('/')
-        if endpoint:
-            endpoint = endpoint.lstrip('/')
-            return f"{base_url}/{endpoint}"
-        return base_url
+        playlists = self.get('playlists', [])
+        if playlists and isinstance(playlists, list) and len(playlists) > 0:
+            # 新格式：playlists 数组
+            valid_playlists = []
+            for pl in playlists:
+                if isinstance(pl, dict) and pl.get('url'):
+                    valid_playlists.append(pl)
+            if valid_playlists:
+                return valid_playlists
+        
+        # 旧格式兼容：使用 playlist_url 和 download_dir
+        old_url = self.get('playlist_url', '')
+        if old_url:
+            return [{
+                'name': '默认歌单',
+                'url': old_url,
+                'download_dir': self.get('download_dir', './downloads'),
+                'quality': self.get('default_quality', 'hires')
+            }]
+        
+        return []
     
     def validate(self):
         """
@@ -146,10 +168,10 @@ class Settings:
         Returns:
             (is_valid, error_message)
         """
-        # 检查歌单链接
-        playlist_url = self.get('playlist_url', '')
-        if not playlist_url:
-            return False, "请配置歌单链接 (playlist_url)"
+        # 检查歌单配置
+        playlists = self.get_playlists()
+        if not playlists:
+            return False, "请配置歌单链接 (在 playlists 数组中添加 url)"
         
         # 检查音质设置
         quality = self.get('default_quality', 'hires')

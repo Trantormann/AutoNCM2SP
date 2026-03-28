@@ -18,12 +18,15 @@ from .downloader import get_downloader
 class PlaylistManager:
     """歌单管理器"""
     
-    def __init__(self):
+    def __init__(self, download_dir=None):
         """初始化歌单管理器"""
         self.settings = get_settings()
         self.api = get_api()
         self.db = get_database()
         self.downloader = get_downloader()
+        
+        # 允许指定下载目录
+        self.download_dir = download_dir
         
         self.playlist_id = None
         self.playlist_name = ""
@@ -32,7 +35,7 @@ class PlaylistManager:
     
     def load_playlist(self, playlist_url=None) -> Tuple[bool, str]:
         """
-        加载歌单
+        加载歌单（兼容旧接口）
         
         Args:
             playlist_url: 歌单链接，默认从配置读取
@@ -41,9 +44,20 @@ class PlaylistManager:
             (是否成功, 消息)
         """
         url = playlist_url or self.settings.get('playlist_url', '')
+        return self.load_playlist_from_url(url)
+    
+    def load_playlist_from_url(self, url: str) -> Tuple[bool, str]:
+        """
+        从 URL 加载歌单
         
+        Args:
+            url: 歌单链接
+        
+        Returns:
+            (是否成功, 消息)
+        """
         if not url:
-            return False, "未配置歌单链接，请在 config/config.json 中设置 playlist_url"
+            return False, "歌单链接为空"
         
         # 提取歌单ID
         self.playlist_id = self.api.extract_playlist_id(url)

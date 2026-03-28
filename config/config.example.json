@@ -1,6 +1,18 @@
 {
-    "playlist_url": "https://music.163.com/playlist?id=歌单ID",
-    "download_dir": "./downloads",
+    "playlists": [
+        {
+            "name": "歌单1名称",
+            "url": "https://music.163.com/playlist?id=歌单ID1",
+            "download_dir": "./downloads/歌单1",
+            "quality": "hires"
+        },
+        {
+            "name": "歌单2名称",
+            "url": "https://music.163.com/playlist?id=歌单ID2",
+            "download_dir": "./downloads/歌单2",
+            "quality": "lossless"
+        }
+    ],
     "default_quality": "hires",
     "login": {
         "phone": "",
