@@ -1,0 +1,10 @@
+{
+    "playlist_url": "https://music.163.com/playlist?id=歌单ID",
+    "download_dir": "./downloads",
+    "default_quality": "hires",
+    "login": {
+        "phone": "",
+        "email": "",
+        "password": ""
+    }
+}
