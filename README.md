@@ -20,7 +20,7 @@
 ### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/<你的用户名>/AutoNCM2SP.git
+git clone https://github.com/Trantormann/AutoNCM2SP.git
 cd AutoNCM2SP
 ```
 
