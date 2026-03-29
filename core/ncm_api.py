@@ -3,6 +3,7 @@
 使用 pyncm 与网易云音乐 API 交互（纯 Python 实现，无 C 扩展依赖）
 """
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -15,7 +16,11 @@ from database.models import SongInfo
 try:
     from pyncm.apis.playlist import GetPlaylistInfo
     from pyncm.apis.track import GetTrackAudio, GetTrackDetail
-    from pyncm.apis.login import LoginViaCellphone, LoginViaEmail, GetCurrentLoginStatus
+    from pyncm.apis.login import (
+        LoginViaCellphone, LoginViaEmail, GetCurrentLoginStatus,
+        GetLoginQRCodeUrl, LoginQrcodeCheck, LoginQrcodeUnikey
+    )
+    import pyncm
     PYNCM_AVAILABLE = True
 except Exception as e:
     PYNCM_AVAILABLE = False
@@ -39,7 +44,70 @@ class NcmAPI:
         self.settings = get_settings()
         self.logged_in = False
         self.login_user = ''
-        self._try_login()
+        self.session_file = Path(__file__).parent.parent / 'config' / '.ncm_session'
+        
+        # 先尝试加载已有会话
+        if not self._load_session():
+            self._try_login()
+
+    # ------------------------------------------------------------------ #
+    # 会话管理
+    # ------------------------------------------------------------------ #
+
+    def _save_session(self):
+        """保存登录会话到文件"""
+        try:
+            if hasattr(pyncm, 'GetCurrentSession'):
+                session = pyncm.GetCurrentSession()
+                session_data = {
+                    'cookies': dict(session.cookies),
+                    'headers': dict(session.headers)
+                }
+                self.session_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(self.session_file, 'w', encoding='utf-8') as f:
+                    json.dump(session_data, f, ensure_ascii=False)
+                return True
+        except Exception as e:
+            print(f'  [登录] 保存会话失败: {e}')
+        return False
+
+    def _load_session(self) -> bool:
+        """从文件加载登录会话"""
+        try:
+            if not self.session_file.exists():
+                return False
+            
+            with open(self.session_file, 'r', encoding='utf-8') as f:
+                session_data = json.load(f)
+            
+            if hasattr(pyncm, 'GetCurrentSession'):
+                session = pyncm.GetCurrentSession()
+                session.cookies.update(session_data.get('cookies', {}))
+                session.headers.update(session_data.get('headers', {}))
+                
+                # 验证会话是否有效
+                result = GetCurrentLoginStatus()
+                if result and result.get('code') == 200:
+                    profile = result.get('profile', {})
+                    self.login_user = profile.get('nickname', '未知用户')
+                    self.logged_in = True
+                    print(f'  [登录] 已恢复登录: {self.login_user}')
+                    return True
+                else:
+                    # 会话已过期，删除文件
+                    self.session_file.unlink(missing_ok=True)
+        except Exception as e:
+            print(f'  [登录] 加载会话失败: {e}')
+            # 删除可能损坏的会话文件
+            if self.session_file.exists():
+                self.session_file.unlink(missing_ok=True)
+        return False
+
+    def clear_session(self):
+        """清除保存的会话"""
+        if self.session_file.exists():
+            self.session_file.unlink(missing_ok=True)
+            print('  [登录] 已清除会话')
 
     # ------------------------------------------------------------------ #
     # 登录
@@ -66,12 +134,84 @@ class NcmAPI:
                 profile = result.get('profile') or result.get('data', {}).get('profile', {})
                 self.login_user = profile.get('nickname', '未知用户') if profile else '未知用户'
                 self.logged_in = True
+                self._save_session()  # 保存会话
                 print(f'  [登录] 已登录账号: {self.login_user}')
             else:
                 msg = result.get('message', '') if result else '无响应'
-                print(f'  [登录] 登录失败: {msg}（以游客模式继续）')
+                # 判断是否需要验证码
+                if '验证码' in msg or result.get('code') == 8821:
+                    print(f'  [登录] 密码登录触发风控: {msg}')
+                    print('  [登录] 尝试二维码登录...')
+                    self._try_qrcode_login()
+                else:
+                    print(f'  [登录] 登录失败: {msg}（以游客模式继续）')
         except Exception as e:
-            print(f'  [登录] 登录异常: {e}（以游客模式继续）')
+            err_str = str(e)
+            if '验证码' in err_str or '60001' in err_str or '8821' in err_str:
+                print(f'  [登录] 密码登录触发风控，尝试二维码登录...')
+                self._try_qrcode_login()
+            else:
+                print(f'  [登录] 登录异常: {e}（以游客模式继续）')
+
+    def _try_qrcode_login(self):
+        """二维码登录（绕过风控）"""
+        import time
+        try:
+            # 获取二维码 key
+            result = LoginQrcodeUnikey()
+            qrcode_key = result.get('unikey') if isinstance(result, dict) else result
+            if not qrcode_key:
+                print('  [登录] 获取二维码失败（以游客模式继续）')
+                return
+
+            # 生成二维码 URL
+            qr_url = GetLoginQRCodeUrl(qrcode_key)
+            print(f'  [登录] 请使用网易云音乐 APP 扫描下方二维码登录：')
+            print()
+            print(f'  {qr_url}')
+            print()
+
+            # 尝试生成终端二维码
+            try:
+                import qrcode
+                qr = qrcode.QRCode(border=2)
+                qr.add_data(qr_url)
+                qr.make()
+                qr.print_ascii(invert=True, tty=True)
+                print()
+            except Exception:
+                print('  （如终端无法显示二维码，请手动复制上方链接到浏览器打开）')
+                print()
+
+            # 轮询检查扫码状态
+            print('  等待扫码...', end='', flush=True)
+            for _ in range(60):  # 最多等待60秒
+                time.sleep(1)
+                status_result = LoginQrcodeCheck(qrcode_key)
+                code = status_result.get('code') if isinstance(status_result, dict) else None
+
+                if code == 803:  # 授权登录成功
+                    print('  扫码成功！')
+                    # 获取登录状态
+                    login_result = GetCurrentLoginStatus()
+                    if login_result and login_result.get('code') == 200:
+                        profile = login_result.get('profile', {})
+                        self.login_user = profile.get('nickname', '未知用户')
+                        self.logged_in = True
+                        self._save_session()  # 保存会话
+                        print(f'  [登录] 已登录账号: {self.login_user}')
+                        return
+                elif code == 800:  # 二维码过期
+                    print('  二维码已过期（以游客模式继续）')
+                    return
+                elif code == 801:  # 等待扫码
+                    continue
+                elif code == 802:  # 等待确认
+                    print('  等待确认...', end='', flush=True)
+
+            print('  扫码超时（以游客模式继续）')
+        except Exception as e:
+            print(f'  [登录] 二维码登录异常: {e}（以游客模式继续）')
 
     # ------------------------------------------------------------------ #
     # 健康检查

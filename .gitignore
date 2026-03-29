@@ -18,6 +18,7 @@ database/downloads.db
 
 # 配置文件（含账号密码，不上传）
 config/config.json
+config/.ncm_session
 
 # IDE / 工具
 .qoder/
