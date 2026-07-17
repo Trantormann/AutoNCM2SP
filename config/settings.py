@@ -5,7 +5,14 @@
 
 import json
 import os
+import base64
 from pathlib import Path
+from utils.logger import get_logger
+
+log = get_logger()
+
+# 密码混淆密钥（非安全加密，仅避免明文存储）
+_OBFUSCATION_KEY = 'AutoNCM2SP_2024'
 
 
 # 默认配置
@@ -70,11 +77,11 @@ class Settings:
                     # 合并默认配置和用户配置（处理新增配置项）
                     self.config = {**DEFAULT_CONFIG, **loaded_config}
             except (json.JSONDecodeError, IOError) as e:
-                print(f"配置文件读取失败: {e}，使用默认配置")
+                log.warning("配置文件读取失败: %s，使用默认配置", e)
                 self.config = DEFAULT_CONFIG.copy()
                 self.save()
         else:
-            print("配置文件不存在，创建默认配置")
+            log.info("配置文件不存在，创建默认配置")
             self.config = DEFAULT_CONFIG.copy()
             self.save()
     
@@ -87,7 +94,7 @@ class Settings:
             with open(self.config_path, 'w', encoding='utf-8') as f:
                 json.dump(self.config, f, ensure_ascii=False, indent=4)
         except IOError as e:
-            print(f"配置文件保存失败: {e}")
+            log.error("配置文件保存失败: %s", e)
     
     def get(self, key, default=None):
         """
@@ -124,12 +131,39 @@ class Settings:
             path = base_dir / path
         return str(path.resolve())
     
+    @staticmethod
+    def _obfuscate_password(password: str) -> str:
+        """对密码进行简单混淆（非安全加密，仅避免明文存储）"""
+        if not password:
+            return ''
+        data = password.encode('utf-8')
+        key_bytes = _OBFUSCATION_KEY.encode('utf-8')
+        xored = bytes(a ^ b for a, b in zip(data, (key_bytes * (len(data) // len(key_bytes) + 1))[:len(data)]))
+        return 'ENC:' + base64.b64encode(xored).decode('ascii')
+    
+    @staticmethod
+    def _deobfuscate_password(encoded: str) -> str:
+        """还原混淆的密码"""
+        if not encoded:
+            return ''
+        if not encoded.startswith('ENC:'):
+            return encoded  # 明文密码，向后兼容
+        try:
+            data = base64.b64decode(encoded[4:])
+            key_bytes = _OBFUSCATION_KEY.encode('utf-8')
+            xored = bytes(a ^ b for a, b in zip(data, (key_bytes * (len(data) // len(key_bytes) + 1))[:len(data)]))
+            return xored.decode('utf-8')
+        except Exception:
+            return encoded  # 解密失败，返回原值
+
     def get_login_config(self) -> dict:
-        """获取登录配置，合并默认空值"""
+        """获取登录配置，合并默认空值，自动解密密码"""
         default = {"phone": "", "email": "", "password": ""}
         user = self.get('login', {})
         if isinstance(user, dict):
             default.update(user)
+        # 解密密码
+        default['password'] = self._deobfuscate_password(default.get('password', ''))
         return default
 
     def get_playlists(self) -> list:

@@ -13,10 +13,12 @@ echo.
 
 :: 检查 Python 环境
 echo [*] 检查 Python 环境...
-python --version >nul 2>&1
+where python >nul 2>&1
 if errorlevel 1 (
     echo [错误] 未检测到 Python，请先安装 Python 3.8 或更高版本
     echo 下载地址: https://www.python.org/downloads/
+    echo.
+    echo 提示：安装时请勾选 "Add Python to PATH"
     pause
     exit /b 1
 )
@@ -24,26 +26,19 @@ for /f "tokens=*" %%a in ('python --version 2^>^&1') do set PYTHON_VERSION=%%a
 echo [OK] %PYTHON_VERSION%
 echo.
 
-:: 检查、创建并激活虚拟环境
+:: 自动创建并激活虚拟环境
 echo [*] 检查虚拟环境...
 if exist "venv\Scripts\activate.bat" (
     call venv\Scripts\activate.bat
     echo [OK] 虚拟环境已激活
 ) else (
-    echo [提示] 未检测到虚拟环境
-    set /p CREATE_VENV="是否创建虚拟环境? (Y/n): "
-    if "!CREATE_VENV!"=="" set CREATE_VENV=Y
-    if /i "!CREATE_VENV!"=="Y" (
-        echo 正在创建虚拟环境...
-        python -m venv venv
-        if exist "venv\Scripts\activate.bat" (
-            call venv\Scripts\activate.bat
-            echo [OK] 虚拟环境创建成功
-        ) else (
-            echo [警告] 虚拟环境创建失败，将使用全局 Python
-        )
+    echo [提示] 未检测到虚拟环境，正在自动创建...
+    python -m venv venv
+    if exist "venv\Scripts\activate.bat" (
+        call venv\Scripts\activate.bat
+        echo [OK] 虚拟环境创建成功
     ) else (
-        echo [提示] 使用全局 Python 运行
+        echo [警告] 虚拟环境创建失败，将使用全局 Python
     )
 )
 echo.
@@ -65,6 +60,24 @@ if exist "requirements.txt" (
     echo [警告] 未找到 requirements.txt
 )
 echo.
+
+:: 首次运行检查配置文件
+if not exist "config\config.json" (
+    if exist "config\config.example.json" (
+        echo [提示] 首次运行，正在从模板创建配置文件...
+        copy "config\config.example.json" "config\config.json" >nul
+        echo [OK] 配置文件已创建
+        echo.
+        echo [重要] 请先编辑配置文件，填写歌单链接和登录信息！
+        echo.
+        notepad "config\config.json"
+        echo.
+        echo 配置完成后按任意键继续...
+        pause >nul
+    ) else (
+        echo [警告] 未找到配置模板文件
+    )
+)
 
 :: 功能选择菜单
 :MENU

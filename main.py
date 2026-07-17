@@ -10,39 +10,37 @@ import argparse
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config.settings import get_settings, QUALITY_ORDER, QUALITY_MAPPING
-from core.ncm_api import get_api
-from core.playlist import get_playlist_manager
+from config.settings import get_settings
 from database.db import get_database
+from utils.logger import get_logger
+
+log = get_logger()
 
 
 def print_banner():
     """打印程序横幅"""
-    print("=" * 60)
-    print("       网易云歌单下载工具")
-    print("=" * 60)
-    print()
+    log.info("=" * 60)
+    log.info("       网易云歌单下载工具")
+    log.info("=" * 60)
 
 
 def check_api():
     """检查 pyncm 库是否可用"""
     import sys
-    print("正在检查 API 库...")
-    print(f"  当前 Python: {sys.executable}")
+    log.info("正在检查 API 库...")
+    log.info("  当前 Python: %s", sys.executable)
 
     try:
         import pyncm
-        print("✓ pyncm 已加载")
+        log.info("✓ pyncm 已加载")
         return True
     except ImportError as e:
-        print(f"✗ pyncm 未安装: {e}")
+        log.error("✗ pyncm 未安装: %s", e)
     except Exception as e:
-        print(f"✗ pyncm 加载失败 ({type(e).__name__}): {e}")
+        log.error("✗ pyncm 加载失败 (%s): %s", type(e).__name__, e)
 
-    print()
-    print("请在当前 Python 环境中安装依赖:")
-    print(f"  {sys.executable} -m pip install pyncm")
-    print()
+    log.info("请在当前 Python 环境中安装依赖:")
+    log.info("  %s -m pip install pyncm", sys.executable)
     return False
 
 
@@ -83,31 +81,28 @@ def show_stats():
     """显示下载统计"""
     db = get_database()
     count = db.get_download_count()
-    print(f"已下载歌曲总数: {count} 首")
-    print()
+    log.info("已下载歌曲总数: %d 首", count)
 
 
-def clear_records():
+def clear_records(auto_mode: bool = False):
     """清除所有下载记录"""
     db = get_database()
     count = db.get_download_count()
-    print(f"当前下载记录: {count} 首")
+    log.info("当前下载记录: %d 首", count)
     
-    confirm = input("确定要清除所有下载记录吗? (yes/no): ").strip().lower()
+    confirm = 'yes' if auto_mode else input("确定要清除所有下载记录吗? (yes/no): ").strip().lower()
     if confirm == 'yes':
         if db.clear_all_records():
-            print("✓ 下载记录已清除")
+            log.info("✓ 下载记录已清除")
         else:
-            print("✗ 清除失败")
+            log.error("✗ 清除失败")
     else:
-        print("已取消")
-    print()
+        log.info("已取消")
 
 
-def process_single_playlist(playlist_url: str, download_dir: str, default_quality: str):
+def process_single_playlist(playlist_url: str, download_dir: str, default_quality: str, auto_mode: bool = False):
     """处理单个歌单下载"""
     from pathlib import Path
-    from core.downloader import get_downloader
     from core.playlist import PlaylistManager
     
     # 创建独立的歌单管理器
@@ -118,25 +113,22 @@ def process_single_playlist(playlist_url: str, download_dir: str, default_qualit
     success, msg = manager.load_playlist_from_url(playlist_url)
     
     if not success:
-        print(f"错误: {msg}")
+        log.error("错误: %s", msg)
         return False
-    
-    print()
+
     manager.show_playlist_info()
     
     if not manager.new_songs:
-        print("\n所有歌曲已是最新，无需下载")
+        log.info("所有歌曲已是最新，无需下载")
         return True
-    
-    print()
-    confirm = input(f"是否开始下载 {len(manager.new_songs)} 首新歌曲? (Y/n): ").strip().lower()
+
+    confirm = '' if auto_mode else input(f"是否开始下载 {len(manager.new_songs)} 首新歌曲? (Y/n): ").strip().lower()
     
     if confirm and confirm not in ('y', 'yes', ''):
-        print("已取消下载")
+        log.info("已取消下载")
         return True
-    
-    print()
-    stats = manager.download_all()
+
+    manager.download_all(target_quality=default_quality)
     return True
 
 
@@ -145,21 +137,22 @@ def main():
     # 解析命令行参数
     parser = argparse.ArgumentParser(description='网易云歌单下载工具')
     parser.add_argument('--clear', action='store_true', help='清除所有下载记录')
+    parser.add_argument('--auto', action='store_true', help='自动模式（非交互，适合定时任务）')
     args = parser.parse_args()
     
     print_banner()
     
     # 检查 API 库
     if not check_api():
-        input("按回车键退出...")
+        if not args.auto:
+            input("按回车键退出...")
         return 1
-    
-    print()
     
     # 处理清除记录命令
     if args.clear:
-        clear_records()
-        input("按回车键退出...")
+        clear_records(auto_mode=args.auto)
+        if not args.auto:
+            input("按回车键退出...")
         return 0
     
     # 检查配置
@@ -167,49 +160,47 @@ def main():
     is_valid, error_msg = settings.validate()
     
     if not is_valid:
-        print(f"配置错误: {error_msg}")
-        print()
-        print("请编辑 config/config.json 配置文件")
-        print()
-        input("按回车键退出...")
+        log.error("配置错误: %s", error_msg)
+        log.info("请编辑 config/config.json 配置文件")
+        if not args.auto:
+            input("按回车键退出...")
         return 1
     
     # 显示配置信息
-    print("配置检查通过")
+    log.info("配置检查通过")
     playlists = settings.get_playlists()
-    print(f"  歌单数量: {len(playlists)} 个")
+    log.info("  歌单数量: %d 个", len(playlists))
     login_cfg = settings.get_login_config()
     account = login_cfg.get('phone') or login_cfg.get('email') or ''
     if account:
-        print(f"  登录账号: {account}")
+        log.info("  登录账号: %s", account)
     else:
-        print("  登录账号: 未配置（游客模式）")
-    print()
+        log.warning("  登录账号: 未配置（游客模式）")
     
     show_stats()
     
     # 处理所有歌单
     default_quality = settings.get('default_quality', 'hires')
-    total_stats = {'success': 0, 'failed': 0, 'skipped': 0}
     
     for i, pl in enumerate(playlists, 1):
-        print(f"\n{'='*60}")
-        print(f"处理歌单 {i}/{len(playlists)}: {pl.get('name', '未命名')}")
-        print(f"下载目录: {pl.get('download_dir', './downloads')}")
-        print('='*60)
+        log.info("%s", '=' * 60)
+        log.info("处理歌单 %d/%d: %s", i, len(playlists), pl.get('name', '未命名'))
+        log.info("下载目录: %s", pl.get('download_dir', './downloads'))
+        log.info("%s", '=' * 60)
         
         process_single_playlist(
             pl['url'],
             pl.get('download_dir', './downloads'),
-            pl.get('quality', default_quality)
+            pl.get('quality', default_quality),
+            auto_mode=args.auto
         )
+
+    log.info("%s", '=' * 60)
+    log.info("所有歌单处理完毕")
+    log.info("%s", '=' * 60)
     
-    print()
-    print("=" * 60)
-    print("所有歌单处理完毕")
-    print("=" * 60)
-    
-    input("按回车键退出...")
+    if not args.auto:
+        input("按回车键退出...")
     return 0
 
 
@@ -217,11 +208,10 @@ if __name__ == '__main__':
     try:
         sys.exit(main())
     except KeyboardInterrupt:
-        print("\n\n用户取消操作")
+        log.warning("用户取消操作")
         sys.exit(1)
     except Exception as e:
-        print(f"\n程序异常: {e}")
+        log.exception("程序异常: %s", e)
         import traceback
         traceback.print_exc()
-        input("按回车键退出...")
         sys.exit(1)

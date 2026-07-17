@@ -7,13 +7,14 @@ import os
 import re
 import requests
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, Callable, Tuple
 from urllib.parse import urlparse
 
-import sys
-sys.path.append(str(Path(__file__).parent.parent))
 from config.settings import get_settings, QUALITY_MAPPING
 from database.db import get_database
+from utils.logger import get_logger
+
+log = get_logger()
 
 
 class SongDownloader:
@@ -153,8 +154,19 @@ class SongDownloader:
         # 直接保存至下载根目录，不建子文件夹
         return self.download_dir / filename
     
+    def set_download_dir(self, download_dir):
+        """
+        动态设置下载目录
+        
+        Args:
+            download_dir: 新的下载目录路径
+        """
+        self.download_dir = Path(download_dir)
+        self.download_dir.mkdir(parents=True, exist_ok=True)
+
     def download(self, url_data: dict, song_name: str, artist: str, 
-                album: str = '', song_id: int = None) -> tuple[bool, str]:
+                album: str = '', song_id: int = None,
+                download_dir: str = None) -> Tuple[bool, str]:
         """
         下载歌曲
         
@@ -164,6 +176,7 @@ class SongDownloader:
             artist: 艺术家
             album: 专辑
             song_id: 歌曲ID（用于数据库记录）
+            download_dir: 本次下载使用的目录，默认使用实例的 download_dir
         
         Returns:
             (是否成功, 文件路径或错误信息)
@@ -175,20 +188,26 @@ class SongDownloader:
         quality = url_data.get('level', 'standard')
         extension = self.get_file_extension(url_data)
         
-        # 构建文件路径
-        file_path = self.build_file_path(song_name, artist, album, extension, quality)
-        
-        # 检查文件是否已存在
-        if file_path.exists():
-            print(f"  文件已存在，跳过: {file_path.name}")
-            # 仍然记录到数据库
-            if song_id:
-                self.db.add_download_record(
-                    song_id, song_name, artist, album, quality, str(file_path)
-                )
-            return True, str(file_path)
+        # 如果指定了本次下载目录，临时使用
+        original_dir = self.download_dir
+        if download_dir:
+            self.download_dir = Path(download_dir)
+            self.download_dir.mkdir(parents=True, exist_ok=True)
         
         try:
+            # 构建文件路径
+            file_path = self.build_file_path(song_name, artist, album, extension, quality)
+            
+            # 检查文件是否已存在
+            if file_path.exists():
+                log.info("文件已存在，跳过: %s", file_path.name)
+                # 仍然记录到数据库
+                if song_id:
+                    self.db.add_download_record(
+                        song_id, song_name, artist, album, quality, str(file_path)
+                    )
+                return True, str(file_path)
+            
             # 发送下载请求
             response = self.session.get(url, stream=True, timeout=60)
             response.raise_for_status()
@@ -217,21 +236,24 @@ class SongDownloader:
             
             # 格式化文件大小显示
             size_str = self._format_size(total_size if total_size > 0 else downloaded)
-            print(f"  ✓ 下载完成 [{size_str}]")
+            log.info("✓ 下载完成 [%s]", size_str)
             
             return True, str(file_path)
             
         except requests.exceptions.RequestException as e:
             error_msg = f"下载失败: {e}"
-            print(f"  ✗ {error_msg}")
+            log.error("✗ %s", error_msg)
             # 清理未完成的文件
-            if file_path.exists():
+            if 'file_path' in locals() and file_path.exists():
                 file_path.unlink()
             return False, error_msg
         except IOError as e:
             error_msg = f"文件写入失败: {e}"
-            print(f"  ✗ {error_msg}")
+            log.error("✗ %s", error_msg)
             return False, error_msg
+        finally:
+            # 恢复原始下载目录
+            self.download_dir = original_dir
     
     def _format_size(self, size_bytes: int) -> str:
         """
@@ -254,7 +276,8 @@ class SongDownloader:
     
     def download_with_retry(self, url_data: dict, song_name: str, artist: str,
                            album: str = '', song_id: int = None, 
-                           max_retries: int = 3) -> tuple[bool, str]:
+                           download_dir: str = None,
+                           max_retries: int = 3) -> Tuple[bool, str]:
         """
         带重试机制的下载
         
@@ -264,6 +287,7 @@ class SongDownloader:
             artist: 艺术家
             album: 专辑
             song_id: 歌曲ID
+            download_dir: 本次下载使用的目录
             max_retries: 最大重试次数
         
         Returns:
@@ -271,9 +295,11 @@ class SongDownloader:
         """
         for attempt in range(max_retries):
             if attempt > 0:
-                print(f"  第 {attempt + 1} 次重试...")
+                log.info("第 %d 次重试...", attempt + 1)
             
-            success, result = self.download(url_data, song_name, artist, album, song_id)
+            success, result = self.download(
+                url_data, song_name, artist, album, song_id, download_dir
+            )
             if success:
                 return success, result
             

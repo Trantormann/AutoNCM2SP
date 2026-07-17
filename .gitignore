@@ -3,7 +3,13 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+*$py.class
 .Python
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
 
 # 虚拟环境
 venv/
@@ -26,10 +32,16 @@ config/.ncm_session
 .idea/
 *.swp
 *.swo
+*~
 
 # Windows
 Thumbs.db
 Desktop.ini
+desktop.ini
+.DS_Store
 
 # 日志
 *.log
+
+# 残留目录
+api_server/

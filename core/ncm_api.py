@@ -9,9 +9,11 @@ import sys
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 
-sys.path.append(str(Path(__file__).parent.parent))
 from config.settings import get_settings, QUALITY_ORDER, QUALITY_MAPPING
 from database.models import SongInfo
+from utils.logger import get_logger
+
+log = get_logger()
 
 try:
     from pyncm.apis.playlist import GetPlaylistInfo
@@ -68,7 +70,7 @@ class NcmAPI:
                     json.dump(session_data, f, ensure_ascii=False)
                 return True
         except Exception as e:
-            print(f'  [登录] 保存会话失败: {e}')
+            log.warning('保存会话失败: %s', e)
         return False
 
     def _load_session(self) -> bool:
@@ -91,13 +93,13 @@ class NcmAPI:
                     profile = result.get('profile', {})
                     self.login_user = profile.get('nickname', '未知用户')
                     self.logged_in = True
-                    print(f'  [登录] 已恢复登录: {self.login_user}')
+                    log.info('已恢复登录: %s', self.login_user)
                     return True
                 else:
                     # 会话已过期，删除文件
                     self.session_file.unlink(missing_ok=True)
         except Exception as e:
-            print(f'  [登录] 加载会话失败: {e}')
+            log.warning('加载会话失败: %s', e)
             # 删除可能损坏的会话文件
             if self.session_file.exists():
                 self.session_file.unlink(missing_ok=True)
@@ -107,7 +109,7 @@ class NcmAPI:
         """清除保存的会话"""
         if self.session_file.exists():
             self.session_file.unlink(missing_ok=True)
-            print('  [登录] 已清除会话')
+            log.info('已清除会话')
 
     # ------------------------------------------------------------------ #
     # 登录
@@ -121,7 +123,7 @@ class NcmAPI:
         email    = login_cfg.get('email', '').strip()
 
         if not password or (not phone and not email):
-            print('  [登录] 未配置账号，以游客模式运行（仅可下载试听片段）')
+            log.warning('未配置账号，以游客模式运行（仅可下载试听片段）')
             return
 
         try:
@@ -135,23 +137,23 @@ class NcmAPI:
                 self.login_user = profile.get('nickname', '未知用户') if profile else '未知用户'
                 self.logged_in = True
                 self._save_session()  # 保存会话
-                print(f'  [登录] 已登录账号: {self.login_user}')
+                log.info('已登录账号: %s', self.login_user)
             else:
                 msg = result.get('message', '') if result else '无响应'
                 # 判断是否需要验证码
                 if '验证码' in msg or result.get('code') == 8821:
-                    print(f'  [登录] 密码登录触发风控: {msg}')
-                    print('  [登录] 尝试二维码登录...')
+                    log.warning('密码登录触发风控: %s', msg)
+                    log.info('尝试二维码登录...')
                     self._try_qrcode_login()
                 else:
-                    print(f'  [登录] 登录失败: {msg}（以游客模式继续）')
+                    log.warning('登录失败: %s（以游客模式继续）', msg)
         except Exception as e:
             err_str = str(e)
             if '验证码' in err_str or '60001' in err_str or '8821' in err_str:
-                print(f'  [登录] 密码登录触发风控，尝试二维码登录...')
+                log.warning('密码登录触发风控，尝试二维码登录...')
                 self._try_qrcode_login()
             else:
-                print(f'  [登录] 登录异常: {e}（以游客模式继续）')
+                log.warning('登录异常: %s（以游客模式继续）', e)
 
     def _try_qrcode_login(self):
         """二维码登录（绕过风控）"""
@@ -161,12 +163,12 @@ class NcmAPI:
             result = LoginQrcodeUnikey()
             qrcode_key = result.get('unikey') if isinstance(result, dict) else result
             if not qrcode_key:
-                print('  [登录] 获取二维码失败（以游客模式继续）')
+                log.warning('获取二维码失败（以游客模式继续）')
                 return
 
             # 生成二维码 URL
             qr_url = GetLoginQRCodeUrl(qrcode_key)
-            print(f'  [登录] 请使用网易云音乐 APP 扫描下方二维码登录：')
+            log.info('请使用网易云音乐 APP 扫描下方二维码登录：')
             print()
             print(f'  {qr_url}')
             print()
@@ -180,7 +182,7 @@ class NcmAPI:
                 qr.print_ascii(invert=True, tty=True)
                 print()
             except Exception:
-                print('  （如终端无法显示二维码，请手动复制上方链接到浏览器打开）')
+                log.info('如终端无法显示二维码，请手动复制上方链接到浏览器打开')
                 print()
 
             # 轮询检查扫码状态
@@ -199,19 +201,19 @@ class NcmAPI:
                         self.login_user = profile.get('nickname', '未知用户')
                         self.logged_in = True
                         self._save_session()  # 保存会话
-                        print(f'  [登录] 已登录账号: {self.login_user}')
+                    log.info('已登录账号: %s', self.login_user)
                         return
                 elif code == 800:  # 二维码过期
-                    print('  二维码已过期（以游客模式继续）')
+                    log.warning('二维码已过期（以游客模式继续）')
                     return
                 elif code == 801:  # 等待扫码
                     continue
                 elif code == 802:  # 等待确认
                     print('  等待确认...', end='', flush=True)
 
-            print('  扫码超时（以游客模式继续）')
+            log.warning('扫码超时（以游客模式继续）')
         except Exception as e:
-            print(f'  [登录] 二维码登录异常: {e}（以游客模式继续）')
+            log.warning('二维码登录异常: %s（以游客模式继续）', e)
 
     # ------------------------------------------------------------------ #
     # 健康检查
@@ -261,10 +263,10 @@ class NcmAPI:
             result = GetPlaylistInfo(playlist_id)
             if result and result.get('code') == 200:
                 return result.get('playlist')
-            print(f"获取歌单详情失败，code: {result.get('code') if result else 'None'}")
+            log.warning("获取歌单详情失败，code: %s", result.get('code') if result else 'None')
             return None
         except Exception as e:
-            print(f"获取歌单详情异常: {e}")
+            log.error("获取歌单详情异常: %s", e)
             return None
 
     def get_playlist_songs(self, playlist_id: str) -> List[SongInfo]:
@@ -296,7 +298,7 @@ class NcmAPI:
                 result = GetTrackDetail(batch)
 
                 if not result or result.get('code') != 200:
-                    print(f"批次 {i // batch_size + 1} 获取详情失败")
+                    log.warning("批次 %d 获取详情失败", i // batch_size + 1)
                     continue
 
                 for song_data in result.get('songs', []):
@@ -307,7 +309,7 @@ class NcmAPI:
             return all_songs
 
         except Exception as e:
-            print(f"获取歌单歌曲异常: {e}")
+            log.error("获取歌单歌曲异常: %s", e)
             return []
 
     # ------------------------------------------------------------------ #
@@ -344,7 +346,7 @@ class NcmAPI:
             return None
 
         except Exception as e:
-            print(f"获取歌曲链接异常: {e}")
+            log.error("获取歌曲链接异常: %s", e)
             return None
 
     def get_song_url_with_fallback(
@@ -382,7 +384,7 @@ class NcmAPI:
                     return SongInfo.from_api_response(songs[0])
             return None
         except Exception as e:
-            print(f"获取歌曲详情异常: {e}")
+            log.error("获取歌曲详情异常: %s", e)
             return None
 
 
